@@ -1,158 +1,14 @@
+library(ggplot2)
+library(scales)
+library(gridExtra)
 library(RCurl)
 library(XML)
 
+#library(extrafont)
+#font_import()
+#loadfonts()
 
-# -----------------------------------------------------------------------------
-# FUNCTIONS
 
-build.url2 <- function(school) {
-  #name_enc <- paste(unlist(strsplit(as.character(name), " ")), collapse="+")
-  name_enc <- curlEscape(as.character(school["school.adj"]))
-  query <- paste(urlbase, name_enc, "&state=", sep="", collapse="")
-  out = list()
-  out$unitid <- school["unitid"]
-  out$name <- as.character(school["school.adj"])
-  out$query <- query
-  out$city <- school["city.adj"]
-  out$state <- school["state"]  
-  out
-}
-update.url <- function(url, newname) {
-  url$name <- newname
-  name_enc <- curlEscape(as.character(newname))
-  url$query <- paste(urlbase, name_enc, "&state=", sep="", collapse="")
-  url
-}
-update.urlcity <- function(url, newname, newcity) {
-  url$name <- newname
-  name_enc <- curlEscape(as.character(newname))
-  url$query <- paste(urlbase, name_enc, "&state=", sep="", collapse="")
-  url$city <- newcity
-  url
-}
-
-#------
-
-get.doc <- function(url) {
-  print(paste("...", url$name))          
-  doc <- htmlTreeParse(url$query, useInternalNodes = T)
-  doc
-}  
-get.nodes <- function(doc, tag, selector, name) {
-  #xp_expr = "//a[@class='collegename']" 
-  xp_expr <- paste("//", tag, "[@", selector, "='", name, "']", collapse="", sep="")
-  #xp_expr <- paste("//a[@class='", name, "']", collapse="", sep="")
-  nodes = getNodeSet(doc, xp_expr)
-  nodes
-}
-get.page.link <- function(url) {
-  
-  out <- list()
-  out$name <- url$name;
-  out$unitid <- url$unitid;
-  out$link <- NA;
-  subcampus = 0;
-  name.adj <- url$name;  
-  
-  print(url$name)  
-  doc <- get.doc(url)  
-  nodes <- get.nodes(doc, "a", "class","collegename")  
-  #xp_expr = "//a[@class='collegename']" 
-  
-  if (length(nodes) == 0) {
-    
-    # subcampus-es
-    if (grepl(" at ", url$name, fixed=TRUE)) {  
-      name.adj <- gsub(" at ", "--", url$name)
-      doc <- get.doc(update.url(url, name.adj))
-      nodes <- get.nodes(doc, "a", "class", "collegename");
-      if (length(nodes) == 0) subcampus = 1;
-      
-    } else if (grepl("-", url$name)) {
-      name.adj <- gsub("-", "--", url$name)
-      doc <- get.doc(update.url(url, name.adj))
-      nodes <- get.nodes(doc, "a", "class", "collegename");
-      if (length(nodes) == 0) subcampus = 1;            
-    } 
-    # generally, there are no 'The's
-    if (grepl("^(The )", name.adj)) {
-      name.adj <- gsub("^(The )", "", name.adj)
-      doc <- get.doc(update.url(url, name.adj))
-      nodes <- get.nodes(doc, "a", "class", "collegename");            
-    }
-    
-    if ((length(nodes) == 0) & subcampus == 1) {
-      name.adj <- substring(name.adj, 0, regexpr("--", name.adj)-1)
-      doc <- get.doc(update.url(url, name.adj))
-      nodes <- get.nodes(doc, "a", "class", "collegename");      
-    }
-  }
-  
-  #print(paste("final node length: ", length(nodes)))    
-  #print(nodes)
-  names <- sapply(nodes,xmlValue)
-  links <- sapply(nodes,xmlGetAttr,"href")
-  
-  if (length(names) == 1) {
-    out$link <- links[1]
-  }
-  else {     
-    if (length(names) > 1) {
-      if (length(which(names==name.adj)) == 1) {
-        out$link <- links[which(names==name.adj)]
-      } else {
-        # this is where we could end up with a non-sub campus that just happens to have a dash
-        # but should just fail anyway
-        loc_node <- get.nodes(doc, "p", "class", "citystate"); 
-        #print(loc_node)
-        loc_val <- sapply(loc_node,xmlValue)
-        #print(loc_val)
-        vec <- as.vector(strsplit(loc_val, ", "))
-        state <- sapply(vec, function(x) x[2])
-        city <- sapply(vec, function(x) x[1])
-        print(city)
-        #print(state)
-        print(url$city)
-        #print("which one")
-        #print(which(city==as.character(url$city)))
-        cs <- which(city==as.character(url$city))
-        if (length(cs) == 1) {
-          out$link <- links[cs]  
-        }
-      }  
-    }     
-  }
-  # if we have more than two results and can't match one exactly on name or city , then we should not do anything -- NA
-  
-  out$name.adj <- name.adj
-  out$names <- names
-  out$links <- links
-  out
-  #print(xpathApply(nodes[[1]],"//a"))
-}
-
-get.sections <- function(doc) {
-  print(doc$name)
-  out <- NA
-  if (!is.na(doc$link)) {
-    print("... retrieving")
-    doc <- htmlTreeParse(paste(site, doc$link, sep="", collapse=""), useInternalNodes = T)
-    #doc <- htmlTreeParse(paste(site, doc$link, "/student-life", sep="", collapse=""), useInternalNodes = T)
-    
-    xp_exprs <- sapply(sections, function(x) paste("//div[@id='", x, "']", collapse="", sep=""))
-    nodes <- sapply(xp_exprs, function(x) sapply(getNodeSet(doc, x), xmlValue))
-    nodes <- sapply(nodes, function(x) ifelse(length(x)==0, NA, x))
-    #nodes <- sapply(xp_exprs, function(x) sapply(getNodeSet(doc, x), function(y) ifelse(!is.na(y), xmlValue(y), NA)))
-    #print(nodes)
-    out <- sapply(nodes, function(x) {
-      ifelse(!is.na(x), regmatches(x, regexpr("([0-9]+)",x)), NA) 
-    })
-  }
-  out
-  #names <- sapply(nodes,xmlValue)
-  #links <- sapply(nodes,xmlGetAttr,"href")  
-  #print(xpathApply(nodes[[1]],"//a"))
-}
 
 # -----------------------------------------------------------------------------
 # START
@@ -200,10 +56,10 @@ table(nchar(iped$zip.base))
 #iped[grep("Globe", iped$school.adj,fixed=TRUE),]
 
 # degree granting isntitutions ONLY: (1)
-# level: eliminate less than 2 year schools (3)
+# level: 4+ year schools only
 # sector: eliminate administrative units (0)
-iped <- iped[which(iped$level != 3 & iped$deg.grant == 1 & iped$sector != 0),]
-dim(iped) # 4899
+iped <- iped[which(iped$level == 1 & iped$deg.grant == 1 & iped$sector != 0),]
+dim(iped) # 4899 3166
 str(iped)
 head(iped)
 
@@ -213,9 +69,9 @@ head(iped)
 # acadmic: eliminate non-academic (0)
 # all online: eliminate those with only on-line offerings (1)
 iped <- iped[which(iped$region != 0 & iped$open != 0 & iped$academic != 0 & iped$all.online != 1),]
-dim(iped) # 4511
+dim(iped) # 4511 3030
 iped <- iped[which(iped$ug.enroll != 0),]
-dim(iped) # 4205
+dim(iped) # 4205 2732
 
 
 # -----------------------------------------------------------------------------
@@ -250,6 +106,8 @@ crime <- merge(oc.crime[,c(1:3,5:8)], all.campus.totals[,-1], by.x="UNITID_P", b
 which(table(crime$UNITID_P) != 1) # 0
 length(table(crime$UNITID_P) == 1)# 11064
 head(crime)
+
+
 
 # combine both sex offenses into one variable for each year
 grep("FORCIB", names(ic))
@@ -298,33 +156,34 @@ summary(head(crime[,c(2,9,10,34,18,19,35, 27,28,36,37,38)]))
 
 # the ones in iped w/no crime data
 noc <- setdiff(iped$unitid, crime$cr.unitid)
-length(noc) # 299 145
+length(noc) # 299 145 109
      
 ic2 <- merge(iped, crime, by.x=c("unitid","zip.base"), by.y=c("cr.unitid", "zip.base"), all.x=TRUE, all.y=FALSE)
 ic <- ic2
+#ic.bak <- ic
 # FYI NOT using IPEDS city.adj to merge (that is for Greek data) -- use IPED's city ( is city.uc)
 #ic <- merge(iped, crime, by.x=c("unitid","city.uc"), by.y=c("cr.unitid", "cr.city.uc"), all.x=TRUE, all.y=FALSE)
 #ic.bak <- ic
 #str(ic)
-dim(ic) # 5375 4324
+dim(ic) # 2793
 
 # -----------------------------------------------------------------------------
 # handle duplicates 
 # since we have one row per unit ID going in, we need to have one row going out
 dupids <- names(table(ic$unitid)[table(ic$unitid) > 1]) 
-length(dupids) # 261 dup IDS 88
+length(dupids) # 46
 duprows <- (ic$unitid %in% dupids)
-sum(duprows) # 737 rows 207
+sum(duprows) # 107
 
 # check that none of the missing rows are a duplicate index, though that wouldn't make sense
 #sum(missingcr & duprows) # 0
 #stats <- c(1:3, 33,34,37,68)
 #ic[dupindexes,stats]
 mainc <- ifelse(is.na(ic$cr.branchid), FALSE, (ic$cr.branchid == "001"))
-sum(mainc) #4399 not sure what thismeans 3862
+sum(mainc) # 2511
 #ic[dupindexes & mainc,stats] # 258 of them
-nrow(ic[duprows & mainc,]) # 258 of them 88
-nrow(ic[duprows & !mainc,]) # 479 of them 119... 88 + 119 = 207
+nrow(ic[duprows & mainc,]) #  46
+nrow(ic[duprows & !mainc,]) # 61. 46+61=107.
 setdiff(ic[duprows,4], ic[duprows & mainc,4]) # these would have no "Main Campus"... now zero
 # we have one row in IPED; we can't let two rows in CRIME data match to it 
 # becuse the crime data would be for two different campuses, but the IPED data for the same one
@@ -334,10 +193,10 @@ setdiff(ic[duprows,4], ic[duprows & mainc,4]) # these would have no "Main Campus
 # SO: take out Non-Main campus rows for the  duplicates that list a Main Campus
 # AND take out all rows for the duplicates with no Main Campus listed
 to.remove <- (duprows & !mainc)
-sum(to.remove) # 479  119
+sum(to.remove) #  61
 ic[to.remove, icstats]
 ic <- ic[!to.remove,]
-nrow(ic) # 4896 = 5375 - 479. NOW 4324 - 119 = 4205.
+nrow(ic) # 2732 = 2793-61.
 
 icstats <- c("unitid", "zip.base","school","city", "state","cr.fullid", "cr.branchid","BRANCH")
 cschools <- c("UNITID_P","cr.fullid", "cr.unitid", "cr.branchid","zip.base","City", "State","INSTNM")
@@ -347,44 +206,49 @@ cschools <- c("UNITID_P","cr.fullid", "cr.unitid", "cr.branchid","zip.base","Cit
 # now check which rows are missing, aka "Missing crime" (missingcr)
 # because some are due to error
 missing.rows <- is.na(ic$cr.fullid) 
-sum(missing.rows) # 473 #317
-ic$zipmerge <- ifelse(missing.rows, 0, 1) #317 have zeros
-head(ic[missing.rows, icstats])
+sum(missing.rows) #209
+ic$zipmerge <- ifelse(missing.rows, 0, 1) #209 have zeros
+table(ic$zipmerge)
+#head(ic[missing.rows, icstats])
 
-missingids <- ic[missing.rows, "unitid"] # 317 unique IDS in iped with no crime data
+missingids <- ic[missing.rows, "unitid"]
+length(unique(missingids))  # 209 unique IDS in iped with no crime data
 missingipedrows <- (iped$unitid %in% missingids)
-sum(missingipedrows) # 317
+sum(missingipedrows) #209
 missingcrrows <- (crime$cr.unitid %in% missingids)  
-sum(missingcrrows) # 482 rows in crime table with those 317 unit iDS
+sum(missingcrrows) # 304 rows in crime table with those 209 unit iDS
 head(crime[missingcrrows, cschools])
 
 ic.redo <- merge(iped[missingipedrows,], crime[missingcrrows,], 
               by.x=c("unitid","city.uc"), 
               by.y=c("cr.unitid", "cr.city.uc"), all.x=TRUE, all.y=FALSE)
 missing.rows <- is.na(ic.redo$cr.fullid) 
-sum(missing.rows) # 186. so 317-186=131 rows merged
+length(missing.rows) #213
+sum(missing.rows) #138. So 213-138 = 75 matches
 matches <- ic.redo[!missing.rows,]
 matches$zipmerge <- 0
 matches$citymerge <- 1
 matches$zip.base <- matches$zip.base.x
 matches$cr.city.uc <- toupper(matches$cr.city.adj)
 matches <- matches[,-c(57,101)]
-dim(matches) # 153.. we have some duplicates
+dim(matches) # we have some duplicates 75
 ic$citymerge <- 0
 ic <- rbind(ic, matches)
-dim(ic) #4358 = 4205 + 153
+dim(ic) #2807 = 2732+75. 
+table(ic$zipmerge)
+table(ic$citymerge)
 
 missingids <- ic.redo[missing.rows, "unitid"] # 186
-# 145 missing unit IDs for which there is no crime UNITID - can't make a match
+# missing unit IDs for which there is no crime UNITID - can't make a match
 setdiff(missingids, crime$cr.unitid)
-# 41 for which there is a mathcing UNITID in crime
+# 29 for which there is a mathcing UNITID in crime
 # work on these
 missingids <- intersect(missingids, crime$cr.unitid)
-length(missingids) # 41
+length(missingids) # 29
 missingipedrows <- (iped$unitid %in% missingids)
-sum(missingipedrows) # 41
+sum(missingipedrows) # 29
 missingcrrows <- (crime$cr.unitid %in% missingids)  
-sum(missingcrrows) # 188 rows in crime table 
+sum(missingcrrows) # 162 rows in crime table
 
 
 ic.redo <- merge(iped[missingipedrows,], crime[missingcrrows,], 
@@ -392,7 +256,7 @@ ic.redo <- merge(iped[missingipedrows,], crime[missingcrrows,],
                    by.y=c("cr.unitid"), all.x=TRUE, all.y=FALSE)
 missing.rows <- is.na(ic.redo$cr.fullid) 
 sum(missing.rows) # 0 - all merged
-dim(ic.redo) # 188 - lots of duplicates
+dim(ic.redo) # 162
 ic.redo$zip.base <- ic.redo$zip.base.x
 ic.redo <- ic.redo[,-c(57,102)]
 ic.redo$zipmerge <- 0
@@ -400,53 +264,50 @@ ic.redo$citymerge <- 0
 ic.redo$unitmerge <- 1
 ic$unitmerge <- 0
 ic <- rbind(ic, ic.redo)
-dim(ic) # 4546 = 4358 + 188 #OLD 4358 = 4205 + 153
+dim(ic) # 2969= 2807+162.  # 4546 = 4358 + 188 #OLD 4358 = 4205 + 153
 
 #just check
-table(ic$zipmerge) #3888  
-table(ic$citymerge) #153
-table(ic$unitmerge) #188. Total 4229.
+table(ic$zipmerge) #3888 2523 
+table(ic$citymerge) #153 75
+table(ic$unitmerge) #188. 162 Total 2760 
+dim(ic) # 2969
 
 # -----------------------------------------------------------------------------
-# now take out any dusplicates I just introuduced
-# by fixing the missing data
+# now take out any dusplicates I just introuduced when I fixed the missing data
+# and also fix an "incorrect" matches -- mactches made on non-Main Campus branches
 
 dupids <- names(table(ic$unitid)[table(ic$unitid) > 1]) 
-length(dupids) # 172
+length(dupids) # 100
 duprows <- (ic$unitid %in% dupids)
-sum(duprows) # 513
+sum(duprows) # 337
 
 mainc <- ifelse(is.na(ic$cr.branchid), FALSE, (ic$cr.branchid == "001")) # this also gets ones that were originally unmatched
-sum(mainc) #4031
+sum(mainc) #2609
 #ismatched <- (ic$zipmerge==0 & ic$citymerge==0 & ic$unitmerge==0)
-nrow(ic[duprows & mainc,]) # 169
-nrow(ic[duprows & !mainc,]) # 344  .. + 169 = 513
-
-
-# -----------------------------------------------------------------------------
-# fix incorrect matches
+nrow(ic[duprows & mainc,]) # 98
+nrow(ic[duprows & !mainc,]) # 239  .. + 98 = 337
 
 # these matched on an ID alone (so not to a ZIP or city), but not to a main campus
 # can't let these match because not confident i have the right campus
-setdiff(ic[duprows,3], ic[duprows & mainc,3])
+setdiff(ic[duprows,3], ic[duprows & mainc,3]) #2
 wrongmatchids <- setdiff(ic[duprows,1], ic[duprows & mainc,1])
 #removerows <- (ic$unitid %in% wrongmatchids) & !is.na(ic$cr.branchid)
 removerows <- ifelse(ic$unitid %in% wrongmatchids, !is.na(ic$cr.branchid), TRUE)
 #to.remove <- (duprows & !mainc)
 to.remove <- (duprows & !mainc & removerows)
 
-sum(to.remove) # 344 341
+sum(to.remove) # 237.  That's 239-2.
 ic[to.remove, icstats]
 ic <- ic[!to.remove,]
-nrow(ic) # 4205.  4546-341.
+nrow(ic) # 2732.  2969-237.
 
 # -----------------------------------------------------------------------------
 # for the unitids with no matches in Crime data... 
 # can we do anything?
 # NOT REALLY.  
-length(which(ic$zipmerge==0 & ic$citymerge==0 & ic$unitmerge==0)) # this is 148
-length(which(is.na(ic$cr.fullid))) # this is 148
-length(setdiff(ic[which(is.na(ic$cr.fullid)),"unitid"],crime$cr.unitid)) # 145, because of three incorrrect matches we left in IC
+length(which(ic$zipmerge==0 & ic$citymerge==0 & ic$unitmerge==0)) # this is 111 with no matches
+length(which(is.na(ic$cr.fullid))) # this is 111
+length(setdiff(ic[which(is.na(ic$cr.fullid)),"unitid"],crime$cr.unitid)) # 109, because of two incorrrect matches we left in IC
 
 nomatch.ids <- setdiff(ic[which(is.na(ic$cr.fullid)),"unitid"],crime$cr.unitid)
 missingipedrows <- iped$unitid %in% nomatch.ids
@@ -502,23 +363,26 @@ urlbase <- "http://colleges.usnews.rankingsandreviews.com/best-colleges/search?n
 
 #urls <- as.list(apply(ic[1:10,], 1, function(x) build.url2(x)))
 urls <- as.list(apply(ic, 1, function(x) build.url2(x)))
-length(urls) # 4899
+length(urls) # 2732
 urls[[10]]
-# urls.bak <- urls
+#urls.bak <- urls
+#urls.bak2 <- urls
+
+
 # --
 # use the search URL object get the URL of the USNews page for the school
 
 pages <- NA
 pages <- lapply(urls, function(x) get.page.link(x))
-length(pages) # 4896
+length(pages) # 2732
 #pages.bak <- pages
 #pages.bak2 <- pages
-#pages.bak3 <- pages.bak2
-sum(sapply(pages, function(x) !is.na(x$link))) # 2067 page hits on US Nes
+#pages.bak3 <- pages
+sum(sapply(pages, function(x) !is.na(x$link))) # 1913
 cond <- sapply(pages, function(x) !is.na(x$link))
-hits <- sapply(pages[cond], function(x) x$name) # 2067
+hits <- sapply(pages[cond], function(x) x$name) # 1913
 length(hits)
-misses <- sapply(pages[!cond], function(x) x$name) # 2829
+misses <- sapply(pages[!cond], function(x) x$name) # 819
 length(misses)
 as.vector(hits[1:100])
 as.vector(misses[1:100])
@@ -526,14 +390,13 @@ as.vector(misses[1:100])
 # test cases for this
 misses[grep("The University of Alabama", misses)]
 hits[grep("The University of Texas at Austin", hits)]
-
 which(ic$school=="Union College")
 which(ic$school=="Kettering College") # 2409
 ic[which(ic$school=="Kettering College"),]
 
 test <- ic[2172,] # Just picked one - Union College schnectady
 get.page.link(build.url2(test)) 
-
+get.page.link(update.url(test, "The University of Alabama in Huntsville"))
 get.page.link(update.url(test, "All-State Career School-Allied Health Campus")) 
 get.page.link(update.url(test, "The University of Alabama at Birmingham"))
 get.page.link(update.url(test, "The University of Tennessee-Chattanooga"))
@@ -587,16 +450,16 @@ sort(table(as.character(iped$school)) # these will get schools that will give us
 sections = c("fraternity_members", "sorority_members")
 data <- NA
 data <- lapply(pages, function(x) get.sections(x))
-data.bak <- data
+#data.bak <- data
 #data.bak2 <- data
 #data.bak3 <- data.bak2
 length(data)
 gdata <- sapply(data, function(x) !is.na(x[1]))
-sum(gdata) # 1065 = 66six + 399
+sum(gdata) # 996
 gdata.notzero <- sapply(data, function(x) !is.na(x[1]) & !as.numeric(x[1]) == 0)
-sum(gdata.notzero) # 66six
+sum(gdata.notzero) # 639
 gdata.zero <- sapply(data, function(x) !is.na(x[1]) & as.numeric(x[1]) == 0)
-sum(gdata.zero) # 399
+sum(gdata.zero) # 357
 
 
 # -----------------------------------------------------------------------------
@@ -617,14 +480,14 @@ head(greeks)
 dim(greeks)
 
 setdiff(ic$unitid, greeks$unitid) # 0
-setdiff(greeks$unitid, ic$unitid) # quite a few
+setdiff(greeks$unitid, ic$unitid) # 0
 icg <- merge(ic, greeks, by.x="unitid", by.y="unitid", all.x=TRUE, all.y=FALSE)
-dim(icg) #4205
+dim(icg) #2732
 str(icg)
 head(icg)
 
-length(which(!is.na(icg$pct.frat))) # 1065 1024
-length(which(!is.na(icg$pct.sor))) # 1064 1023
+length(which(!is.na(icg$pct.frat))) # 996
+length(which(!is.na(icg$pct.sor))) # 995
 
 
 #!! -----
@@ -668,10 +531,10 @@ setdiff(sor$school, icg.doj$school.adj.greek)
 # this was only additional one
 icg[grep("Miami University", icg$school.adj),] #ok
 
-length(which(!is.na(icg$pct.frat))) # 1068 1027
-length(which(!is.na(icg$pct.sor))) # 1067 1026
+length(which(!is.na(icg$pct.frat))) # 996
+length(which(!is.na(icg$pct.sor))) # 995
 
-
+#DIV tag: students_on_off_campus
 
 # ------------------------------------------
 # Merge School/Greek/Crime Data with DOJ Investigations
@@ -870,14 +733,6 @@ length(which(is.na(ic$cr.sex.off.101112.tot.per1000fte) & ic$level==1 & ic$ug.en
 length(which(ic$cr.sex.off.101112.tot.per1000fte == 0 & ic$level==1 & ic$ug.enroll!=0)) # 1294
 length(which(ic$cr.sex.off.101112.tot.per1000fte>0 & ic$level==1 & ic$ug.enroll!=0)) # 1221
 
-
-
-library(ggplot2)
-library(scales)
-library(gridExtra)
-library(extrafont)
-font_import()
-loadfonts()
 
 # ------------------------------------------
 # GRAPH
