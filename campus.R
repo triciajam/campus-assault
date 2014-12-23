@@ -160,31 +160,62 @@ get.sections <- function(doc) {
 # -----------------------------------------------------------------------------
 # IPEDS
 
-iped <- read.csv("ipedschools.csv", stringsAsFactor=FALSE)
+iped <- read.csv("ipedschools_d2.csv", stringsAsFactor=FALSE)
 dim(iped) #7597 - in the 50 states ONLY for 2013-2014 --- NOT Guam, Palau, Marshall Islands, etc
 head(iped)
-names(iped) <- c("unitid", "school","alias","city","zip","long","lat","state","fips","region", 
-                 "sector", "level","control","deg.grant","histblack","tribal","urban","size",
-                 "cat","cost.inst.oncamp","ug.enroll","gr.enroll","pctwomen.tot.enroll",
-                 "pctwomen.gr.enroll","pctwomen.ug.enroll","tot.enroll","ft.enroll","pt.enroll",
-                 "fte.enroll")
+str(iped)
+names(iped) <- c("unitid", "school","state", "entity", "city","zip","state.code","region",
+                 "opeid", "mult.campus", "mult.campus.name", "county.code", "county","cbsa",
+                 "cbsa.type", "csa", "unitid.merged", "open", "cong.dist",
+                 "sector", "level","control","deg.grant","histblack","tribal","urban",
+                 "psec.titleiv", "inst.cat","car.sizesetting", "carneg.ug", "carneg.enroll",
+                 "carneg.basic", "carneg.uginst",
+                 "size", "academic", "all.online",
+                 "price.inst.oncamp","price.outst.oncamp", 
+                 "ug.25older", "gr.25older","all.25older",
+                 "ug.enroll","gr.enroll","pctwomen.tot.enroll",
+                 "pctwomen.ug.enroll","pctwomen.gr.enroll","tot.enroll","fte.enroll","ft.enroll",
+                 "pt.enroll", "pctug.finaid", "pctug.pubfinaid", "avg.finaid","fte.staff")
+# difference between "school" and "entity" entry - none except for 4 rows
+# those are due to capitalization.  So get rid of entity variable, no difference.
+iped[which(iped$entity != iped$school),1:4]
+iped <- iped[,-4]
+# this just gets rid of any unicode, multibyte chars
 iped$school.adj <- gsub("\211\333\322", "-", iped$school)
 iped$school.adj <- gsub("\211\333\252", "'", iped$school.adj)
+# this is often an issue with joining other datasets particulary greek data
 iped$city.adj <- gsub("Saint", "St.", iped$city)
+# will need this later for crime data
+iped$city.uc <- toupper(iped$city)
+# will need this later for crime data
+table(nchar(iped$zip)) # these are the cases
+iped$zip.base <- iped$zip
+# leading zeros missed so just add on
+iped$zip.base <- ifelse(nchar(iped$zip.base)==4 | nchar(iped$zip.base)==8, paste("0", iped$zip.base, sep=""), iped$zip.base)
+iped$zip.base <- substring(iped$zip.base, 1, 5) # strip out whats after the dash
+table(nchar(iped$zip.base))
 
 #iped[grep("The King", iped$school.adj,fixed=TRUE),]
 #iped[grep("A & M", iped$school.adj,fixed=TRUE),]
 #iped[grep("Globe", iped$school.adj,fixed=TRUE),]
 
-# will need this later for crime data
-iped$city.uc <- toupper(iped$city)
-
-# only do degree granting isntitutions with 2-4 year programs
-iped <- iped[which(iped$level < 3 & iped$deg.grant == 1 & iped$sector != 0),]
-iped <- iped[,-3]
+# degree granting isntitutions ONLY: (1)
+# level: eliminate less than 2 year schools (3)
+# sector: eliminate administrative units (0)
+iped <- iped[which(iped$level != 3 & iped$deg.grant == 1 & iped$sector != 0),]
 dim(iped) # 4899
 str(iped)
 head(iped)
+
+# further eliminate
+# region: eliminate military service schools (0)
+# open: eliminate those not open to the public (0)
+# acadmic: eliminate non-academic (0)
+# all online: eliminate those with only on-line offerings (1)
+iped <- iped[which(iped$region != 0 & iped$open != 0 & iped$academic != 0 & iped$all.online != 1),]
+dim(iped) # 4511
+iped <- iped[which(iped$ug.enroll != 0),]
+dim(iped) # 4205
 
 
 # -----------------------------------------------------------------------------
@@ -247,19 +278,18 @@ crime <- crime[,-7] # get rid of sector now
 nrow(crime) # 8857
 str(crime)
 
+# all of these less that are not 5 or 9 characters are campuses outside US
+table(nchar(crime$ZIP))
+# do not have to worry about campus-es outside US; they will not match with an IPED one
+crime$zip.base <- crime$ZIP
+crime$zip.base <- substring(crime$zip.base, 1, 5) # take first five
+
+
+
 # there are NO NA's in the sex off crime data -- all have a number
 cstats <- c(2,9,10,34,18,19,35, 27,28,36,37,38)
 head(crime[,c(2,9,10,34,18,19,35, 27,28,36,37,38)])
 summary(head(crime[,c(2,9,10,34,18,19,35, 27,28,36,37,38)]))
-# you don't get something from nothing
-# and you can't let them get them off their track - she didn't make her points
-# compared to amount of debt, price increase is minimal
-# how else do you want to pay for the MTA -- the government needs money to 
-# define "ALWAYS" == Any categorical tatement liek that you shoudl questions
-# most times, trains DO run on time
-# HOW do you think the subway will run without money????
-# if you stop paying, the subway will STOP....
-# it's the MTA' fault not our fault 
 
 
 # -----------------------------------------------------------------------------
@@ -268,100 +298,197 @@ summary(head(crime[,c(2,9,10,34,18,19,35, 27,28,36,37,38)]))
 
 # the ones in iped w/no crime data
 noc <- setdiff(iped$unitid, crime$cr.unitid)
-length(noc) # 299
-#iped[which(iped$unitid %in% noc),1:2] # 299 of them
-noc2 <- setdiff(crime$cr.unitid, iped$unitid)
-length(noc2) # 650... but not going to worry about these -- we have crime but now 
-             # IPED data, don't know why but going with IPED
-
+length(noc) # 299 145
+     
+ic2 <- merge(iped, crime, by.x=c("unitid","zip.base"), by.y=c("cr.unitid", "zip.base"), all.x=TRUE, all.y=FALSE)
+ic <- ic2
 # FYI NOT using IPEDS city.adj to merge (that is for Greek data) -- use IPED's city ( is city.uc)
-ic <- merge(iped, crime, by.x=c("unitid","city.uc"), by.y=c("cr.unitid", "cr.city.uc"), all.x=TRUE, all.y=FALSE)
-ic.bak <- ic
-str(ic)
-dim(ic) # 5375 
+#ic <- merge(iped, crime, by.x=c("unitid","city.uc"), by.y=c("cr.unitid", "cr.city.uc"), all.x=TRUE, all.y=FALSE)
+#ic.bak <- ic
+#str(ic)
+dim(ic) # 5375 4324
 
-# handle duplicates
+# -----------------------------------------------------------------------------
+# handle duplicates 
+# since we have one row per unit ID going in, we need to have one row going out
 dupids <- names(table(ic$unitid)[table(ic$unitid) > 1]) 
-length(dupids) # 261 dup IDS
-dupindexes <- (ic$unitid %in% dupids)
-sum(dupindexes) # 737 rows
-# check which rows are missing
-missingcr <- is.na(ic$cr.fullid) #473
-sum(missingcr) # 473
+length(dupids) # 261 dup IDS 88
+duprows <- (ic$unitid %in% dupids)
+sum(duprows) # 737 rows 207
+
 # check that none of the missing rows are a duplicate index, though that wouldn't make sense
-sum(missingcr & dupindexes) # 0
+#sum(missingcr & duprows) # 0
 #stats <- c(1:3, 33,34,37,68)
 #ic[dupindexes,stats]
 mainc <- ifelse(is.na(ic$cr.branchid), FALSE, (ic$cr.branchid == "001"))
-sum(mainc) #4399 not sure what thismeans
+sum(mainc) #4399 not sure what thismeans 3862
 #ic[dupindexes & mainc,stats] # 258 of them
-nrow(ic[dupindexes & mainc,]) # 258 of them
-nrow(ic[dupindexes & !mainc,]) # 479 of them
-setdiff(ic[dupindexes,3], ic[dupindexes & mainc,3]) # these have no "Main Campus"
-# Tarrant County - there is no Main or 001 campus in Crime DB
-# "University of Phoenix-Central Florida Campus - the city of the Main campus in IPED does not match city of Main Campus in Crime DB, so no match
-# The Community College of Baltimore County - same as U Pheonix - for the "001" campus cities do not match, so there is no 001 row in ic after merge
-iped[grep("Tarrant", iped$school.adj),]
-crime[grep("Tarrant", crime$INSTNM),]
-ic[grep("Tarrant", ic$school.adj),]
+nrow(ic[duprows & mainc,]) # 258 of them 88
+nrow(ic[duprows & !mainc,]) # 479 of them 119... 88 + 119 = 207
+setdiff(ic[duprows,4], ic[duprows & mainc,4]) # these would have no "Main Campus"... now zero
+# we have one row in IPED; we can't let two rows in CRIME data match to it 
+# becuse the crime data would be for two different campuses, but the IPED data for the same one
 # Rule: If you can tell which is Main campus (or branch 001), and city and Unitid both match, then match on that.
 # If you can't tell which is Main Campus (ie if there is no main campus or 001 entry in crime) take the entry out - there is no
 #   other godo way to make the decision.
-# SO: take out Non-Main campus rows for the 258 duplicates that list a Main Campus
-# AND take out all rows for the 3 duplicates with no Main Campus listed
-to.remove <- (dupindexes & !mainc)
-sum(to.remove) # 479
-#ic[to.remove, c(1:3,71)]
+# SO: take out Non-Main campus rows for the  duplicates that list a Main Campus
+# AND take out all rows for the duplicates with no Main Campus listed
+to.remove <- (duprows & !mainc)
+sum(to.remove) # 479  119
+ic[to.remove, icstats]
 ic <- ic[!to.remove,]
-nrow(ic) # 4896 = 5375 - 479
-dim(ic)
-str(ic)
-# Just double check that data in IPEDS is same as Data in Crime DB
-# it should be, but want to confirm
-# if all are zero, let's get rid of them
-which(ic$state != ic$State)
-which(ic$city.uc != toupper(ic$City))
-which(ic$zip != toupper(ic$Zip))
-# double check indices of what to delete
+nrow(ic) # 4896 = 5375 - 479. NOW 4324 - 119 = 4205.
+
+icstats <- c("unitid", "zip.base","school","city", "state","cr.fullid", "cr.branchid","BRANCH")
+cschools <- c("UNITID_P","cr.fullid", "cr.unitid", "cr.branchid","zip.base","City", "State","INSTNM")
+
+# -----------------------------------------------------------------------------
+# now check missing rows
+# now check which rows are missing, aka "Missing crime" (missingcr)
+# because some are due to error
+missing.rows <- is.na(ic$cr.fullid) 
+sum(missing.rows) # 473 #317
+ic$zipmerge <- ifelse(missing.rows, 0, 1) #317 have zeros
+head(ic[missing.rows, icstats])
+
+missingids <- ic[missing.rows, "unitid"] # 317 unique IDS in iped with no crime data
+missingipedrows <- (iped$unitid %in% missingids)
+sum(missingipedrows) # 317
+missingcrrows <- (crime$cr.unitid %in% missingids)  
+sum(missingcrrows) # 482 rows in crime table with those 317 unit iDS
+head(crime[missingcrrows, cschools])
+
+ic.redo <- merge(iped[missingipedrows,], crime[missingcrrows,], 
+              by.x=c("unitid","city.uc"), 
+              by.y=c("cr.unitid", "cr.city.uc"), all.x=TRUE, all.y=FALSE)
+missing.rows <- is.na(ic.redo$cr.fullid) 
+sum(missing.rows) # 186. so 317-186=131 rows merged
+matches <- ic.redo[!missing.rows,]
+matches$zipmerge <- 0
+matches$citymerge <- 1
+matches$zip.base <- matches$zip.base.x
+matches$cr.city.uc <- toupper(matches$cr.city.adj)
+matches <- matches[,-c(57,101)]
+dim(matches) # 153.. we have some duplicates
+ic$citymerge <- 0
+ic <- rbind(ic, matches)
+dim(ic) #4358 = 4205 + 153
+
+missingids <- ic.redo[missing.rows, "unitid"] # 186
+# 145 missing unit IDs for which there is no crime UNITID - can't make a match
+setdiff(missingids, crime$cr.unitid)
+# 41 for which there is a mathcing UNITID in crime
+# work on these
+missingids <- intersect(missingids, crime$cr.unitid)
+length(missingids) # 41
+missingipedrows <- (iped$unitid %in% missingids)
+sum(missingipedrows) # 41
+missingcrrows <- (crime$cr.unitid %in% missingids)  
+sum(missingcrrows) # 188 rows in crime table 
+
+
+ic.redo <- merge(iped[missingipedrows,], crime[missingcrrows,], 
+                   by.x=c("unitid"), 
+                   by.y=c("cr.unitid"), all.x=TRUE, all.y=FALSE)
+missing.rows <- is.na(ic.redo$cr.fullid) 
+sum(missing.rows) # 0 - all merged
+dim(ic.redo) # 188 - lots of duplicates
+ic.redo$zip.base <- ic.redo$zip.base.x
+ic.redo <- ic.redo[,-c(57,102)]
+ic.redo$zipmerge <- 0
+ic.redo$citymerge <- 0
+ic.redo$unitmerge <- 1
+ic$unitmerge <- 0
+ic <- rbind(ic, ic.redo)
+dim(ic) # 4546 = 4358 + 188 #OLD 4358 = 4205 + 153
+
+#just check
+table(ic$zipmerge) #3888  
+table(ic$citymerge) #153
+table(ic$unitmerge) #188. Total 4229.
+
+# -----------------------------------------------------------------------------
+# now take out any dusplicates I just introuduced
+# by fixing the missing data
+
+dupids <- names(table(ic$unitid)[table(ic$unitid) > 1]) 
+length(dupids) # 172
+duprows <- (ic$unitid %in% dupids)
+sum(duprows) # 513
+
+mainc <- ifelse(is.na(ic$cr.branchid), FALSE, (ic$cr.branchid == "001")) # this also gets ones that were originally unmatched
+sum(mainc) #4031
+#ismatched <- (ic$zipmerge==0 & ic$citymerge==0 & ic$unitmerge==0)
+nrow(ic[duprows & mainc,]) # 169
+nrow(ic[duprows & !mainc,]) # 344  .. + 169 = 513
+
+
+# -----------------------------------------------------------------------------
+# fix incorrect matches
+
+# these matched on an ID alone (so not to a ZIP or city), but not to a main campus
+# can't let these match because not confident i have the right campus
+setdiff(ic[duprows,3], ic[duprows & mainc,3])
+wrongmatchids <- setdiff(ic[duprows,1], ic[duprows & mainc,1])
+#removerows <- (ic$unitid %in% wrongmatchids) & !is.na(ic$cr.branchid)
+removerows <- ifelse(ic$unitid %in% wrongmatchids, !is.na(ic$cr.branchid), TRUE)
+#to.remove <- (duprows & !mainc)
+to.remove <- (duprows & !mainc & removerows)
+
+sum(to.remove) # 344 341
+ic[to.remove, icstats]
+ic <- ic[!to.remove,]
+nrow(ic) # 4205.  4546-341.
+
+# -----------------------------------------------------------------------------
+# for the unitids with no matches in Crime data... 
+# can we do anything?
+# NOT REALLY.  
+length(which(ic$zipmerge==0 & ic$citymerge==0 & ic$unitmerge==0)) # this is 148
+length(which(is.na(ic$cr.fullid))) # this is 148
+length(setdiff(ic[which(is.na(ic$cr.fullid)),"unitid"],crime$cr.unitid)) # 145, because of three incorrrect matches we left in IC
+
+nomatch.ids <- setdiff(ic[which(is.na(ic$cr.fullid)),"unitid"],crime$cr.unitid)
+missingipedrows <- iped$unitid %in% nomatch.ids
+sum(missingipedrows) # 145 here too
+head(iped[missingipedrows,ipstats])
+iped[missingipedrows,ipstats]
+
+
+
+# -----------------------------------------------------------------------------
+# for testing 
+
+iped[which(iped$unitid=="482680"), ipstats]
+crime[which(crime$cr.unitid=="482680"), cschools]
+# case where IPED has these as different unitids but Crime has them as one unitid with sub-branchids
+# branches will not match becuase unitids dont
+iped[grep("Arizona State", iped$school.adj), ipstats]
+crime[grep("Arizona State", crime$cr.school), cschools]
+
+
+
+
+# -----------------------------------------------------------------------------
+# final clean up 
+ic$cr.state <- ic$State
+ic$cr.zip <- ic$ZIP
+
 grep("UNITID_P", names(ic))
-names(ic)[32:37]
-ic <- ic[,-c(32:37)]
+names(ic)[58:63]
+ic <- ic[,-c(58:63)]
 str(ic)
 
-
-length(which(is.na(ic$fte.enroll))) # 130
+length(which(is.na(ic$fte.enroll))) # 0
 ic$cr.sex.off.101112.tot.per1000fte <- ifelse(is.na(ic$fte.enroll), NA, (1000*ic$cr.sex.off.101112.tot) / ic$fte.enroll)
 ic$cr.sex.off.101112.avg.per1000fte <- ifelse(is.na(ic$fte.enroll), NA, (1000*ic$cr.sex.off.101112.avg) / ic$fte.enroll)
 
-### IGNORE----
-
-# now handle when no crime data
-all(table(ic$unitid) == 1) # at this point each unitid only happens once at this point
-# have to do this again since we removed some
-missingcr <- is.na(ic$cr.fullid) #473
-sum(missingcr) # 473
-
-length(setdiff(ic[missingcr,"unitid"], crime$cr.unitid)) # 299 in ic, no match in CRIME DB so take out - TAKE OUT
-length(intersect(ic[missingcr,"unitid"], crime$cr.unitid)) # 174 are in ic AND in CRIME DB - try to match
-length(intersect(ic[missingcr,"school.adj"], crime$INSTNM)) # 181 names the same.. so there must be some with same name, different IDs
-intersect(intersect(ic[missingcr,"unitid"], crime$cr.unitid), intersect(ic[missingcr,"school.adj"], crime$INSTNM))
-
-inboth <- intersect(ic[missingcr,"unitid"], crime$cr.unitid)
-length(inboth) # 174
-crrows <- NA
-crrows <- do.call("rbind", lapply(inboth, function(x) crime[grep(x, crime$cr.unitid),]))
-iprows <- do.call("rbind", lapply(inboth, function(x) iped[grep(x, iped$unitid),]))
-dim(iprows) # 174
-dim(crrows) # 461
-new <- merge(iprows, crrows, by.x=c("unitid","school.adj"), by.y=c("cr.unitid", "INSTNM"), all.x=TRUE, all.y=FALSE)
-nrow(new) # 451
-sum(table(new$unitid) == 1) # 122 143
-sum(table(new$unitid) > 1) # 52 31
-new.match <- names(table(new$unitid) == 1)
-#new.match <- lapply(new.match, function(x) new[which(new$unitid == x),])
-new.match <- do.call("rbind", lapply(new.match, function(x) new[which(new$unitid == x),]))
-
-### END IGNORE----
+# -----------------------------------------------------------------------------
+# make some better categories
+ic$urban.adj <- ifelse(ic$urban < 0, 0, 
+                       ifelse(ic$urban < 20, 1, 
+                       ifelse(ic$urban < 30, 2,   
+                       ifelse(ic$urban < 40, 3, 4))))
 
 
 # -----------------------------------------------------------------------------
@@ -490,15 +617,14 @@ head(greeks)
 dim(greeks)
 
 setdiff(ic$unitid, greeks$unitid) # 0
-setdiff(greeks$unitid, ic$unitid) # 0
-icg <- merge(ic, greeks, by.x="unitid", by.y="unitid", all.x=TRUE, all.y=TRUE)
-dim(icg)
+setdiff(greeks$unitid, ic$unitid) # quite a few
+icg <- merge(ic, greeks, by.x="unitid", by.y="unitid", all.x=TRUE, all.y=FALSE)
+dim(icg) #4205
 str(icg)
 head(icg)
 
-length(which(!is.na(icg$pct.frat))) # 1065
-length(which(!is.na(icg$pct.sor))) # 1064
-
+length(which(!is.na(icg$pct.frat))) # 1065 1024
+length(which(!is.na(icg$pct.sor))) # 1064 1023
 
 
 #!! -----
@@ -542,8 +668,8 @@ setdiff(sor$school, icg.doj$school.adj.greek)
 # this was only additional one
 icg[grep("Miami University", icg$school.adj),] #ok
 
-length(which(!is.na(icg$pct.frat))) # 1068
-length(which(!is.na(icg$pct.sor))) # 1067
+length(which(!is.na(icg$pct.frat))) # 1068 1027
+length(which(!is.na(icg$pct.sor))) # 1067 1026
 
 
 
@@ -595,19 +721,19 @@ doj[doj$doj.school.adj =="DAVIS AND ELKINS COLLEGE",]$doj.school.adj <- toupper(
 doj$doj.school.adj2 <- doj$doj.school.adj # use this for the join so that doj.school.adj stays after
 head(doj)
 
-setdiff(doj$doj.school.adj2, icg$school.adj.uc) # only one that doesn't match
+setdiff(doj$doj.school.adj2, icg$school.adj.uc) # two that don't match - both are grad schools
 
 icg.doj <- merge(icg, doj, by.x=c("school.adj.uc", "state"), by.y=c("doj.school.adj2", "doj.state"), all.x=TRUE, all.y=TRUE)
-nrow(icg.doj)  # 4897... 1 from DOJ that didn't match, and so was added as a new row.
+nrow(icg.doj)  # 4897 4207... 2 from DOJ that didn't match, and so was added as a new row.
 icg.doj$doj.invest <- ifelse(is.na(icg.doj$doj.invest), 0, icg.doj$doj.invest)
 str(icg.doj)
 
 nrow(icg.doj[which(icg.doj$doj.invest==1),]) # 85
-nrow(icg.doj[which(icg.doj$doj.invest==0),]) # 4812
+nrow(icg.doj[which(icg.doj$doj.invest==0),]) # 4812 4122
 
-length(icg.doj[which(icg.doj$doj.invest==1 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),5]) # 23 - matches 23 removed from ggplot
-length(icg.doj[which(icg.doj$doj.invest==0 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),5]) # 3812 - matches the 3812 rows removed from ggplot
-icg.doj[which(icg.doj$doj.invest==1 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),c(5,32,74)]
+length(icg.doj[which(icg.doj$doj.invest==1 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),5]) # 23 
+length(icg.doj[which(icg.doj$doj.invest==0 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),5]) # 3812 3163
+icg.doj[which(icg.doj$doj.invest==1 & (is.na(icg.doj$pct.frat) | is.na(icg.doj$pct.sor))),c(5,105,106)]
 # have to try to get frat data for the 23 DOJ schools
 # so check them and hand enter if find in another source
 # BUTTE-GLENN: Butte College                                                  no USN                            no CDS                    stays NA  no info
@@ -651,8 +777,8 @@ icg.doj[which(icg.doj$school.adj=="University of Virginia-Main Campus"),]$pct.so
 
 
 
-length(which(!is.na(icg.doj$pct.frat))) # 1075 = 1068 + 7 I added by hand
-length(which(!is.na(icg.doj$pct.sor))) # 1074 = 1067 + 7 added by hand
+length(which(!is.na(icg.doj$pct.frat))) # 1034 = 1027+7.   1075 = 1068 + 7 I added by hand
+length(which(!is.na(icg.doj$pct.sor))) # 1033=1026+7.    1074 = 1067 + 7 added by hand
 
 
 ug.women <- icg.doj$ug.enroll * (icg.doj$pctwomen.ug.enroll/100)
@@ -663,7 +789,7 @@ ngreeks <- ifelse(is.na(ngreek.women), 0, ngreek.women) + ifelse(is.na(ngreek.me
 # NA is case where undergrad enroll is zero or (BOTH frat AND sor pct are NA).
 # for all other cases, we get a number (including if frat and sor both are Zero)
 icg.doj$pct.greek <- ifelse(icg.doj$ug.enroll==0 | (is.na(icg.doj$pct.frat) & is.na(icg.doj$pct.sor)), NA, ((ngreeks) / icg.doj$ug.enroll)*100)
-length(which(!is.na(icg.doj$pct.greek))) # 1049
+length(which(!is.na(icg.doj$pct.greek))) # 1049 1039
 
 icg.doj[which(is.na(icg.doj$pct.frat) & !is.na(icg.doj$pct.sor)),] #5
 icg.doj[which(!is.na(icg.doj$pct.frat) & is.na(icg.doj$pct.sor)),] #6
@@ -672,7 +798,7 @@ icg.doj$pct.sor.adj <- ifelse(is.na(icg.doj$pct.sor), 0, icg.doj$pct.sor)
 icg.doj$pct.greek.adj <- ifelse(is.na(icg.doj$pct.greek), 0, icg.doj$pct.greek)
 #icg.doj[1:30,]
 
-nrow(icg.doj) # 4897
+nrow(icg.doj) # 4897 4207
 str(icg.doj)
 
 
@@ -712,10 +838,10 @@ icg.doj.all <- icg.doj
 # this what happens to Harvard Law
 #icg.doj.all[grep("HARVARD", icg.doj.all$doj.school),1:3]
 #icg.doj <- icg.doj.all
-length(which(icg.doj$level==1 & icg.doj$ug.enroll!=0))
+length(which(icg.doj$level==1))
 
 # THESE NUMBERS ARE FOR THE SMALL (2779) data set!!
-icg.doj <- icg.doj[which(icg.doj$level==1 & icg.doj$ug.enroll!=0), ] #2779
+icg.doj <- icg.doj[which(icg.doj$level==1), ] #2779 2732
 nrow(icg.doj)
 nrow(icg.doj[which(icg.doj$doj.invest==1),1:3]) # 81 schools under invesigation left (was 85)
 nrow(icg.doj[which(icg.doj$doj.invest==1 & is.na(icg.doj$pct.frat)),1:3]) # 12
@@ -919,7 +1045,7 @@ base9 <- base9 + scale_x_discrete(expand=c(0,10)) +
   #theme(legend.position="top") + 
   #guides(colour=FALSE, size=FALSE)
   guides(colour = guide_legend(order = 1, override.aes = list(size=4)), 
-         size = guide_legend(order = 2))
+         size = guide_legend(order = 2)) + facet_wrap(~)
 
 base9
 
